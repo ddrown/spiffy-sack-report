@@ -85,6 +85,12 @@ sub include_in_list {
   return $self->{packets} > 10; # arbitrary
 }
 
+sub finished {
+  my($self) = @_;
+
+  return $self->{fin};
+}
+
 sub as_str {
   my($self,$now) = @_;
 
@@ -93,7 +99,11 @@ sub as_str {
   if($self->{packets_lost} > 0) {
     $loss = sprintf("%0.1f",$self->{packets_lost}/($ack+$self->{packets_lost})*100);
   }
-  return "pkt=".$self->{packets}." loss=".$loss."% speed=".$self->speed_str($now);
+  my $final = "";
+  if($self->{fin}) {
+    $final = " (final)";
+  }
+  return "pkt=".$self->{packets}." loss=".$loss."% speed=".$self->speed_str($now).$final;
 }
 
 ########################################################################################
@@ -133,6 +143,9 @@ sub show_state {
 	} else {
 	  print("\n");
 	}
+      }
+      if($self->{conns}{$source}{$dest}->finished()) {
+        delete($self->{conns}{$source}{$dest});
       }
     }
   }
@@ -196,6 +209,8 @@ package main;
 
 use IO::Select;
 use Time::HiRes qw(gettimeofday tv_interval);
+
+$| = 1;
 
 my($conns) = new ConnectionCollection();
 my $tcpdumptext = new TcpdumpText();
