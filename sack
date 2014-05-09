@@ -20,7 +20,9 @@ sub add_packet {
   }
   $self->{packets}++;
   $self->{ack} = $packet_facts{ack};
-  $self->{fin} = $packet_facts{fin};
+  if($packet_facts{fin}) {
+    $self->{fin} = $packet_facts{fin};
+  }
   if($packet_facts{sack}) {
     foreach my $lost (@{$packet_facts{lost}}) {
       if(not $self->{lost}{$lost->{min}}) { # TODO: deal with ranges
