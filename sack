@@ -1,0 +1,224 @@
+#!/usr/bin/perl
+
+use strict;
+
+########################################################################################
+package Connection;
+
+sub new {
+  my $class = shift;
+  my $self = {};
+  bless($self,$class);
+  return $self;
+}
+
+sub add_packet {
+  my($self,%packet_facts) = @_;
+
+  if($packet_facts{data}) {
+    $self->add_data($packet_facts{data});
+  }
+  $self->{packets}++;
+  $self->{ack} = $packet_facts{ack};
+  $self->{fin} = $packet_facts{fin};
+  if($packet_facts{sack}) {
+    foreach my $lost (@{$packet_facts{lost}}) {
+      if(not $self->{lost}{$lost->{min}}) { # TODO: deal with ranges
+        $self->{packets_lost}++; # TODO: wrong name
+        $self->{lost}{$lost->{min}};
+      }
+    }
+  }  
+}
+
+sub speed_num {
+  my($self,$now) = @_;
+
+  if($self->{last_speed_cal} == $now) {
+    return $self->{speed};
+  }
+ 
+  my $xfer = $self->{data};
+  my $seconds = $now - $self->{data_time} + 1;
+  if(ref($self->{data_samples})) {
+    foreach my $sample (@{$self->{data_samples}}) {
+      if($now - $sample->{data_time} < 10) {
+        $xfer += $sample->{xfer};
+	$seconds = $now - $sample->{data_time} + 1;
+      }
+    }
+  }
+
+  $self->{speed} = $xfer * 8 / $seconds;
+  $self->{last_speed_cal} = $now;
+  return $self->{speed};
+}
+
+sub add_data {
+  my($self,$amount) = @_;
+
+  my $now = time();
+  if($self->{data_time} != $now) {
+    push(@{$self->{data_samples}}, {xfer => $self->{data}, when => $self->{data_time}});
+    if(@{$self->{data_samples}} > 10) {
+      shift(@{$self->{data_samples}});
+    }
+    $self->{data} = 0;
+    $self->{data_time} = $now;
+  }
+  $self->{data} += $amount;
+}
+
+sub speed_str {
+  my($self,$now) = @_;
+
+  my $speed = $self->speed_num($now);
+
+  if($speed > 1000000) {
+    return sprintf("%0.1fMb/s", $speed / 1000000);
+  } elsif($self->{speed} > 1000) {
+    return sprintf("%0.1fKb/s", $speed / 1000);
+  }
+  return sprintf("%0.1fb/s", $speed);
+}
+
+sub include_in_list {
+  my($self) = @_;
+
+  return $self->{packets} > 10; # arbitrary
+}
+
+sub as_str {
+  my($self,$now) = @_;
+
+  my $loss = 0;
+  my $ack = $self->{packets};
+  if($self->{packets_lost} > 0) {
+    $loss = sprintf("%0.1f",$self->{packets_lost}/($ack+$self->{packets_lost})*100);
+  }
+  return "pkt=".$self->{packets}." loss=".$loss."% speed=".$self->speed_str($now);
+}
+
+########################################################################################
+package ConnectionCollection;
+
+sub new {
+  my $class = shift;
+  my $self = {};
+  $self->{conns} = {};
+  bless($self,$class);
+  return $self;
+}
+
+sub connection {
+  my($self,$source,$dest) = @_;
+  if(defined $self->{conns}{$source}{$dest}) {
+    return $self->{conns}{$source}{$dest};
+  }
+  $self->{conns}{$source}{$dest} = new Connection();
+  return $self->{conns}{$source}{$dest};
+}
+
+sub show_state {
+  my($self) = @_;
+
+  print "\n";
+  my $now = time();
+  my(%printed);
+  foreach my $source (keys %{$self->{conns}}) {
+    foreach my $dest (keys %{$self->{conns}{$source}}) {
+      if(not $printed{$source}{$dest} and $self->{conns}{$source}{$dest}->include_in_list()) {
+        $printed{$source}{$dest} = 1;
+	printf("$source => $dest %s", $self->{conns}{$source}{$dest}->as_str($now));
+	if(defined($self->{conns}{$dest}{$source}) and $self->{conns}{$dest}{$source}->include_in_list()) {
+	  printf(", %s\n", $self->{conns}{$dest}{$source}->as_str($now));
+	  $printed{$dest}{$source} = 1;
+	} else {
+	  print("\n");
+	}
+      }
+    }
+  }
+}
+
+########################################################################################
+package TcpdumpText;
+
+sub new {
+  my $class = shift;
+  my $self = {};
+  $self->{leftovers} = "";
+  bless($self,$class);
+  return $self;
+}
+
+sub process {
+  my($self,$lines,$conns) = @_;
+
+  $lines = $self->{leftovers}.$lines;
+
+  while($lines =~ s/([^\n]*)\n//s) {
+    my $line = $1;
+# options [nop,nop,sack 1 {605491:709171}]
+    if($line =~ /^([0-9:.]+) (IP6|IP) ([0-9a-f:.]+) > ([0-9a-f:.]+): /) {
+      my($time,$ip,$source,$dest) = ($1,$2,$3,$4);
+      my(%packet_facts);
+      if($line =~ /, seq (\d+):(\d+)/) {
+        $packet_facts{data} = $2-$1;
+      }
+      if($line =~ /, ack (\d+)/) {
+        $packet_facts{ack} = $1;
+      }
+      if($line =~ /Flags \[[^]]*F/) {
+        $packet_facts{fin} = 1;
+      }
+      if($line =~ /sack (\d+) ([{}0-9:]+)/) {
+	my($count,$rcvd) = ($1,$2);
+	$packet_facts{sack} = $count;
+        my(@lost);
+	for(my $i = 0; $i < $count; $i++) {
+	  if($rcvd =~ /^{(\d+):(\d+)}(.*)/) {
+	    my($lost_min,$lost_max) = ($1,$2);
+	    $rcvd = $2;
+	    push(@lost,{min => $lost_min, max => $lost_max});
+	  }
+	}
+	$packet_facts{lost} = \@lost;
+      }
+      $conns->connection($source,$dest)->add_packet(%packet_facts);
+    } else {
+      print "???? $line";
+    }
+  }
+
+  $self->{leftovers} = $lines;
+}
+
+########################################################################################
+package main;
+
+use IO::Select;
+use Time::HiRes qw(gettimeofday tv_interval);
+
+my($conns) = new ConnectionCollection();
+my $tcpdumptext = new TcpdumpText();
+
+my $s = IO::Select->new();
+$s->add(\*STDIN);
+my $next = [gettimeofday()];
+$next->[0] += 1;
+while(1) {
+  my $now = [gettimeofday()];
+  my $timeout = -1 * tv_interval($next,$now);
+  my(@reads) = $s->can_read($timeout);
+  if(@reads) {
+    sysread(STDIN, my $line, 1024);
+    $tcpdumptext->process($line,$conns);
+  }
+  my $now = [gettimeofday()];
+  if(tv_interval($next,$now) >= 0) {
+    $next = $now;
+    $next->[0] += 1;
+    $conns->show_state();
+  }
+}
