@@ -138,11 +138,13 @@ sub show_state {
         $speed = $half_connection_speed;
         $str = "$source => $dest $half_connection_str";
 	if(defined($self->{conns}{$dest}{$source})) {
-          ($half_connection_str, $half_connection_speed) = $self->{conns}{$dest}{$source}->conn_info($now);
-          $str .= ", $half_connection_str";
-          if($half_connection_speed > $speed) {
-            $speed = $half_connection_speed;
-          }
+          my($other_half_connection_str, $other_half_connection_speed) = $self->{conns}{$dest}{$source}->conn_info($now);
+          if($other_half_connection_speed > $speed) {
+	    $str = "$dest => $source $other_half_connection_str, $half_connection_str";
+            $speed = $other_half_connection_speed;
+          } else {
+	    $str .= ", $other_half_connection_str";
+	  }
 	  $printed{$dest}{$source} = 1;
 	}
         if($speed > 1000) { # only include 1kbit/s or faster
