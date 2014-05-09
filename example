@@ -3,4 +3,4 @@
 router=10.1.1.1
 client_mac=10:11:12:13:14:15
 
-tcpdump -pni br-lan -s 200 ether host $client_mac and tcp and not host $router | ./sack
+tcpdump -lpni br-lan -s 200 ether host $client_mac and tcp and not host $router | ./sack
