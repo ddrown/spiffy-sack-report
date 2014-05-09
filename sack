@@ -66,17 +66,17 @@ sub add_data {
   $self->{data} += $amount;
 }
 
-sub speed_str {
+sub speed_info {
   my($self,$now) = @_;
 
   my $speed = $self->speed_num($now);
 
   if($speed > 1000000) {
-    return sprintf("%0.1fMb/s", $speed / 1000000);
+    return(sprintf("%0.1fMb/s", $speed / 1000000), $speed);
   } elsif($self->{speed} > 1000) {
-    return sprintf("%0.1fKb/s", $speed / 1000);
+    return(sprintf("%0.1fKb/s", $speed / 1000), $speed);
   }
-  return sprintf("%0.1fb/s", $speed);
+  return(sprintf("%0.1fb/s", $speed), $speed);
 }
 
 sub include_in_list {
@@ -91,7 +91,7 @@ sub finished {
   return $self->{fin};
 }
 
-sub as_str {
+sub conn_info {
   my($self,$now) = @_;
 
   my $loss = 0;
@@ -103,7 +103,8 @@ sub as_str {
   if($self->{fin}) {
     $final = " (final)";
   }
-  return "pkt=".$self->{packets}." loss=".$loss."% speed=".$self->speed_str($now).$final;
+  my($speed_str,$speed) = $self->speed_info($now);
+  return("pkt=".$self->{packets}." loss=".$loss."% speed=$speed_str$final", $speed);
 }
 
 ########################################################################################
@@ -131,23 +132,34 @@ sub show_state {
 
   print "\n";
   my $now = time();
-  my(%printed);
+  my(%printed,@connections);
   foreach my $source (keys %{$self->{conns}}) {
     foreach my $dest (keys %{$self->{conns}{$source}}) {
       if(not $printed{$source}{$dest} and $self->{conns}{$source}{$dest}->include_in_list()) {
+        my($speed,$str) = (0,"");
         $printed{$source}{$dest} = 1;
-	printf("$source => $dest %s", $self->{conns}{$source}{$dest}->as_str($now));
+        my($half_connection_str, $half_connection_speed) = $self->{conns}{$source}{$dest}->conn_info($now);
+        $speed = $half_connection_speed;
+        $str = "$source => $dest $half_connection_str";
 	if(defined($self->{conns}{$dest}{$source}) and $self->{conns}{$dest}{$source}->include_in_list()) {
-	  printf(", %s\n", $self->{conns}{$dest}{$source}->as_str($now));
+          ($half_connection_str, $half_connection_speed) = $self->{conns}{$dest}{$source}->conn_info($now);
+          $str .= ", $half_connection_str";
+          if($half_connection_speed > $speed) {
+            $speed = $half_connection_speed;
+          }
 	  $printed{$dest}{$source} = 1;
-	} else {
-	  print("\n");
 	}
+        push(@connections,{speed => $speed, str => $str});
       }
       if($self->{conns}{$source}{$dest}->finished()) {
         delete($self->{conns}{$source}{$dest});
       }
     }
+  }
+
+  @connections = sort { $a->{speed} <=> $b->{speed} } @connections;
+  foreach my $connection (@connections) {
+    print $connection->{str}."\n";
   }
 }
 
