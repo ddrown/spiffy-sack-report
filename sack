@@ -34,23 +34,18 @@ sub add_packet {
 sub speed_num {
   my($self,$now) = @_;
 
-  if($self->{last_speed_cal} == $now) {
-    return $self->{speed};
-  }
- 
   my $xfer = $self->{data};
   my $seconds = $now - $self->{data_time} + 1;
   if(ref($self->{data_samples})) {
     foreach my $sample (@{$self->{data_samples}}) {
-      if($now - $sample->{data_time} < 10) {
+      if($now - $sample->{when} < 10) {
         $xfer += $sample->{xfer};
-	$seconds = $now - $sample->{data_time} + 1;
+	$seconds = $now - $sample->{when} + 1;
       }
     }
   }
 
   $self->{speed} = $xfer * 8 / $seconds;
-  $self->{last_speed_cal} = $now;
   return $self->{speed};
 }
 
@@ -59,9 +54,11 @@ sub add_data {
 
   my $now = time();
   if($self->{data_time} != $now) {
-    push(@{$self->{data_samples}}, {xfer => $self->{data}, when => $self->{data_time}});
-    if(@{$self->{data_samples}} > 10) {
-      shift(@{$self->{data_samples}});
+    if(defined($self->{data_time})) { # store 10 seconds of historical data
+      push(@{$self->{data_samples}}, {xfer => $self->{data}, when => $self->{data_time}});
+      if(@{$self->{data_samples}} > 10) {
+        shift(@{$self->{data_samples}});
+      }
     }
     $self->{data} = 0;
     $self->{data_time} = $now;
